@@ -1,0 +1,19 @@
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 <character>"
+    exit 1
+fi
+
+character="$1"
+cnt=0
+
+while IFS= read -r line; do
+    if [[ "$line" =~ ^[[:upper:]].*[[:alnum:][:space:],.!?\)]$ &&
+          ! ( "$line" =~ ",si " || "$line" =~ ", ' ' si [[:upper:]]" || "$line" =~ ", si " ) ]]; then
+        last_char="${line: -1}"
+        if [[ "$last_char" == "?" || "$last_char" == "!" || "$last_char" == "." ]]; then
+            ((cnt++))
+        fi
+    fi
+done
+
+echo "$cnt"
