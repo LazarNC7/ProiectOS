@@ -1,0 +1,374 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <time.h>
+#include <errno.h>
+#include <math.h>
+#include <sys/wait.h>
+
+#pragma pack(push, 1)
+typedef struct {
+    char signature[2];
+    int32_t size;
+    int32_t reserved;
+    int32_t data_offset;
+    int32_t header_size;
+    int32_t width;
+    int32_t height;
+    int16_t planes;
+    int16_t bcnt;
+    int32_t compression;
+    int32_t image_size;
+    int32_t x_resolution;
+    int32_t y_resolution;
+    int32_t num_colors;
+    int32_t important_colors;
+} Header;
+#pragma pack(pop)
+
+int isBMPFile(const Header *header) {
+    return (header->signature[0] == 'B' && header->signature[1] == 'M');
+}
+
+int isBMPFilePath(const char *file_path) {
+    int inp;
+    Header header;
+
+    if ((inp = open(file_path, O_RDONLY)) == -1) {
+        perror("Error opening input file");
+        exit(2);
+    }
+
+    if (read(inp, &header, sizeof(Header)) != sizeof(Header) || 
+        header.signature[0] != 'B' || header.signature[1] != 'M') {
+        close(inp);
+        return 0; 
+    }
+
+    close(inp);
+    return 1; 
+}
+
+int isDirectory(const char *path) {
+    struct stat info;
+    if (stat(path, &info) != 0) {
+        perror("Error getting file information");
+        exit(2);
+    }
+    return S_ISDIR(info.st_mode);
+}
+
+int isRegularFile(const char *path) {
+    struct stat info;
+    if (lstat(path, &info) != 0) {
+        perror("Error getting file information");
+        exit(2);
+    }
+    return S_ISREG(info.st_mode) && !S_ISLNK(info.st_mode);
+}
+
+int isNonBMPFile(const char *path) {
+    if (isRegularFile(path)) {
+        size_t path_len = strlen(path);
+        return (path_len < 4 || (strcmp(path + path_len - 4, ".bmp") != 0));
+    }
+    return 0;
+}
+
+int isSymbolicLink(const char *path) {
+    struct stat info;
+    if (lstat(path, &info) != 0) {
+        perror("Error getting file information");
+        exit(2);
+    }
+    return S_ISLNK(info.st_mode);
+}
+
+void statistics(const char *file) {
+    int inp, out;
+    struct stat info;
+    char statistics[500];
+
+    if ((inp = open(file, O_RDONLY)) == -1) {
+        perror("Error opening input file");
+        exit(2);
+    }
+
+    if (fstat(inp, &info) == -1) {
+        perror("Error getting file information");
+        close(inp);
+        exit(2);
+    }
+
+    Header header;
+    if (read(inp, &header, sizeof(Header)) != sizeof(Header) || !isBMPFile(&header)) {
+        fprintf(stderr, "The input file is not a BMP file.\n");
+        exit(5);
+    }
+
+    
+
+    int width=header.width;
+    int height=header.height;
+
+
+    snprintf(statistics, sizeof(statistics),
+        "File name: %s\nHeight: %d\nWidth: %d\nSize: %d\nUser ID: %d\nLast modified time: %sLink count: %ld\nUser access rights: RWX\nGroup access rights: R--\nOthers access rights: ---\n",
+        file, height, width, (int)info.st_size, info.st_uid, ctime(&info.st_mtime), info.st_nlink);
+
+    out = open("statistica.txt", O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if (out == -1) {
+        perror("Error opening output file");
+        close(inp);
+        exit(3);
+    }
+
+    if (write(out, statistics, strlen(statistics)) == -1) {
+        perror("Error writing to output file");
+    }
+
+    close(inp);
+    close(out);
+}
+
+void calculateStatistics(const char *input_file, const char *output_dir) {
+    
+    int inp, out;
+    struct stat info;
+    char statistics[500];
+
+    if ((inp = open(input_file, O_RDONLY)) == -1) {
+        perror("Error opening input file");
+        exit(EXIT_FAILURE);
+    }
+
+    if (fstat(inp, &info) == -1) {
+        perror("Error getting file information");
+        close(inp);
+        exit(EXIT_FAILURE);
+    }
+
+    Header header;
+    if (read(inp, &header, sizeof(Header)) != sizeof(Header) || !isBMPFile(&header)) {
+        fprintf(stderr, "The input file is not a BMP file.\n");
+        exit(EXIT_FAILURE);
+    }
+
+
+    int permissions = info.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+    char perms[10];
+    sprintf(perms, "%o", permissions);
+
+    snprintf(statistics, sizeof(statistics),
+             "File name: %s\nHeight: %d\nWidth: %d\nSize: %d\nUser ID: %d\nLast modified time: %sLink count: %ld\nUser access rights: %s\nGroup access rights: %s\nOthers access rights: %s\n",
+             input_file, header.height, header.width, (int)info.st_size, info.st_uid, ctime(&info.st_mtime), info.st_nlink,
+             (perms[0] == '7') ? "RWX" : ((perms[0] == '6') ? "RW-" : ((perms[0] == '5') ? "R-X" : ((perms[0] == '4') ? "R--" : ((perms[0] == '3') ? "-WX" : ((perms[0] == '2') ? "-W-" : ((perms[0] == '1') ? "--X" : "---")))))),
+             (perms[1] == '7') ? "RWX" : ((perms[1] == '6') ? "RW-" : ((perms[1] == '5') ? "R-X" : ((perms[1] == '4') ? "R--" : ((perms[1] == '3') ? "-WX" : ((perms[1] == '2') ? "-W-" : ((perms[1] == '1') ? "--X" : "---")))))),
+             (perms[2] == '7') ? "RWX" : ((perms[2] == '6') ? "RW-" : ((perms[2] == '5') ? "R-X" : ((perms[2] == '4') ? "R--" : ((perms[2] == '3') ? "-WX" : ((perms[2] == '2') ? "-W-" : ((perms[2] == '1') ? "--X" : "---")))))));
+
+    char output_file[PATH_MAX];
+    char aux[100];
+    int i=0;
+    char *last_occurrence = strrchr(input_file,'/');
+    strcpy(aux, last_occurrence+1);
+    for(i=0;i<strlen(aux)&&aux[i]!='.';i++){
+        aux[i]=aux[i];
+    }
+    aux[i]='\0';
+    snprintf(output_file, sizeof(output_file), "%s/%s_statistica.txt", output_dir, aux);
+    
+
+    out = open(output_file, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if (out == -1) {
+        perror("Error opening output file");
+        close(inp);
+        exit(EXIT_FAILURE);
+    }
+
+    if (write(out, statistics, strlen(statistics)) == -1) {
+        perror("Error writing to output file");
+    }
+
+    close(inp);
+    close(out);
+}
+
+void statisticsDirectory(const char *file) {
+    int inp, out;
+    struct stat info;
+    char statistics[500];
+
+    if ((inp = open(file, O_RDONLY)) == -1) {
+        perror("Error opening input file");
+        exit(2);
+    }
+
+    if (fstat(inp, &info) == -1) {
+        perror("Error getting file information");
+        close(inp);
+        exit(2);
+    }
+
+    int permissions = info.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+    char perms[10];
+    sprintf(perms, "%o", permissions);
+
+
+    snprintf(statistics, sizeof(statistics),
+        "File name: %s\nUser ID: %d\nUser access rights: %s\nGroup access rights: %s\nOthers access rights: %s\n",
+        file,  info.st_uid,
+        (perms[0] == '7') ? "RWX" : ((perms[0] == '6') ? "RW-" : ((perms[0] == '5') ? "R-X" : ((perms[0] == '4') ? "R--" : ((perms[0] == '3') ? "-WX" : ((perms[0] == '2') ? "-W-" : ((perms[0] == '1') ? "--X" : "---")))))),
+        (perms[1] == '7') ? "RWX" : ((perms[1] == '6') ? "RW-" : ((perms[1] == '5') ? "R-X" : ((perms[1] == '4') ? "R--" : ((perms[1] == '3') ? "-WX" : ((perms[1] == '2') ? "-W-" : ((perms[1] == '1') ? "--X" : "---")))))),
+	     (perms[2] == '7') ? "RWX" : ((perms[2] == '6') ? "RW-" : ((perms[2] == '5') ? "R-X" : ((perms[2] == '4') ? "R--" : ((perms[2] == '3') ? "-WX" : ((perms[2] == '2') ? "-W-" : ((perms[2] == '1') ? "--X" : "---")))))));
+    out = open("statistica.txt", O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if (out == -1) {
+        perror("Error opening output file");
+        close(inp);
+        exit(3);
+    }
+
+    if (write(out, statistics, strlen(statistics)) == -1) {
+        perror("Error writing to output file");
+    }
+
+    close(inp);
+    close(out);
+}
+
+
+
+
+void convertToGrayscale(const char *input_bmp) {
+    int fp_in = open(input_bmp, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if (fp_in == -1) {
+        perror("Error opening input BMP file");
+        exit(EXIT_FAILURE);
+    }
+
+    Header header;
+    if (read(fp_in, &header, sizeof(Header)) != sizeof(Header) || !isBMPFile(&header)) {
+        fprintf(stderr, "The input file is not a BMP file.\n");
+        close(fp_in);
+        exit(EXIT_FAILURE);
+    }
+
+    int width = header.width;
+    int height = header.height;
+    int data_offset = header.data_offset;
+
+    printf("Width=%d\n", width);
+    printf("Height=%d\n", height);
+
+    if (lseek(fp_in, data_offset, SEEK_SET) < 0) {
+        perror("Error setting the cursor in\n");
+        close(fp_in);
+        exit(EXIT_FAILURE);
+    }
+
+    unsigned char pixel[3];
+    double P_gri;
+
+    for (int i = 0; i < height; ++i) {
+        for (int j = 0; j < width; ++j) {
+            if (read(fp_in, &pixel, sizeof(pixel)) != sizeof(pixel)) {
+                perror("Error reading pixel\n");
+                close(fp_in);
+                exit(EXIT_FAILURE);
+            }
+
+            printf("%s %d %d %d\n", input_bmp, pixel[0], pixel[1], pixel[2]);
+
+            P_gri = 0.299 * pixel[2] + 0.587 * pixel[1] + 0.114 * pixel[0];
+
+            unsigned char gray = (unsigned char)P_gri;
+            printf("%d\n", gray);
+
+            
+            unsigned char grayscale_pixel[3] = {gray, gray, gray};
+	    if(lseek(fp_in, -3, SEEK_CUR)<0){
+	      perror("Error setting the cursor out\n");
+	      close(fp_in);
+	      exit(EXIT_FAILURE);
+	    }
+            if (write(fp_in, grayscale_pixel, sizeof(grayscale_pixel))==-1) {
+                perror("Error writing grayscale pixel\n");
+                close(fp_in);
+                exit(EXIT_FAILURE);
+            }
+
+            
+        }
+    }
+
+    close(fp_in);
+}
+
+
+
+void processDirectory(const char *input_dir, const char *output_dir) {
+    DIR *dir = opendir(input_dir);
+    if (!dir) {
+        perror("Error opening directory");
+        exit(EXIT_FAILURE);
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        char file_path[PATH_MAX];
+        snprintf(file_path, sizeof(file_path), "%s/%s", input_dir, entry->d_name);
+
+        if (entry->d_type == DT_DIR) {
+            if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                
+                processDirectory(file_path, output_dir);
+            }
+        } else if (isRegularFile(file_path)) {
+            if (isBMPFilePath(file_path)) {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    
+                    convertToGrayscale(file_path);
+                    exit(EXIT_SUCCESS);
+                } else if (pid > 0) {
+                    
+                    calculateStatistics(file_path, output_dir);
+                    int status;
+                    waitpid(pid, &status, 0);
+                    printf("S-a încheiat procesul cu pid-ul %d și codul %d\n", pid, WEXITSTATUS(status));
+                } else {
+                    perror("Failed to fork");
+                    exit(EXIT_FAILURE);
+                }
+            } else {
+               
+                pid_t pid = fork();
+                if (pid == 0) {
+                    calculateStatistics(file_path, output_dir);
+                    exit(EXIT_SUCCESS);
+                } else if (pid < 0) {
+                    perror("Failed to fork");
+                    exit(EXIT_FAILURE);
+                }
+            }
+        }
+    }
+
+    closedir(dir);
+}
+
+int main(int argc, char *args[]) {
+    if (argc != 3) {
+        printf("Usage: %s <input_directory> <output_directory>\n", args[0]);
+        exit(EXIT_FAILURE);
+    }
+
+
+    processDirectory(args[1], args[2]);
+
+    return 0;
+}
